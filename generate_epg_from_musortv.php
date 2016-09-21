@@ -129,18 +129,22 @@ function get_programs_of_channel($channelID) {
             } else {
                 $description = $infolongdesc_plain;
             }		
-
-            $xml_desc = $xml->createElement("desc");
-            $xml_descText = $xml->createTextNode($description);
-            $xml_desc->appendChild($xml_descText);
+            if (preg_match('/\w+/',$description)) {
+                // Description exists
+                $description = str_replace("\r\n"," ",$description);
+                $description = trim($description);
+                
+                $xml_desc = $xml->createElement("desc");
+                $xml_descText = $xml->createTextNode($description);
+                $xml_desc->appendChild($xml_descText);    
+                $xml_programme->appendChild($xml_desc);
+            }            
 
             $xml_programme->appendChild($xml_title);	
             if ($xml_title_en) {
                 $xml_programme->appendChild($xml_title_en);
             }
-            $xml_programme->appendChild($xml_subtitle);	
-            $xml_programme->appendChild($xml_desc);	
-
+            $xml_programme->appendChild($xml_subtitle);	            	
             $xml_tv->appendChild($xml_programme);
 
             $no_of_programme++;
@@ -207,7 +211,11 @@ foreach($channels as $channelID => $channelName) {
 epg_log("Channel list updated, number of channels: ".$no_of_channels);
 
 $channel_counter = 1;
+
 foreach($channels as $channelID => $channelName) {
+    
+    //if ($channelID!="TV2") continue;   
+    
 	$programs_grabbed = get_programs_of_channel($channelID);
 	epg_log("EPG of channel $channelID ($channel_counter/$no_of_channels) completed, number of programs found: $programs_grabbed");	
 	$channel_counter++;    
@@ -218,6 +226,7 @@ $time = round($time_end - $time_start);
 $time_mins = round($time / 60);
 $time_secs = $time % 60;
 
+$xml->formatOutput = true;
 $xml->save($output_xml);
 epg_log("EPG stored in XMLTV format to file ".realpath($output_xml));
 epg_log("EPG Grabber for site $siteName completed, running time: $time_mins minutes, $time_secs seconds.");
