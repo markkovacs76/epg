@@ -21,19 +21,26 @@
 // Read configuration
 $ini_array = parse_ini_file("generate_epg.ini");
 
-$siteName   = $ini_array["siteName"];
-$timeoffset = $ini_array["timeoffset"];
-$output_xml = $ini_array["output_xml"];
-$logfile    = $ini_array["logfile"];
+$siteName         = $ini_array["siteName"];
+$timeoffset       = $ini_array["timeoffset"];
+$output_xml       = $ini_array["output_xml"];
+$logfile          = $ini_array["logfile"];
 
-$version    = "v1.0";
+if (isset($ini_array["exclude_channels"])) {
+    $exclude_channels = $ini_array["exclude_channels"];
+}
+
+$version    = "v1.1";
 
 include('simple_html_dom.php');
 
-function epg_log($string) {
-    global $logfile;
+function epg_log($string, $delete=false) {
+    global $logfile;    
     $logstring = date("Y-m-d H:i:s").": ".$string."\n";
     if ($logfile) {
+        if ($delete) {
+            unlink($logfile);
+        }
         file_put_contents($logfile, $logstring, FILE_APPEND | LOCK_EX);
     }
     echo $logstring;    
@@ -108,10 +115,13 @@ function get_programs_of_channel($channelID) {
             $xml_title = $xml->createElement("title");
             $xml_title->setAttribute("lang","hu");
             $xml_titleText = $xml->createTextNode($infotitle->innertext);
-            $xml_subtitle = $xml->createElement("sub-title");
-            $xml_subtitleText = $xml->createTextNode($infoshortdesc->innertext);
+            $xml_category = $xml->createElement("category");
+            $xml_category->setAttribute("lang","hu");
+            
+            list($category) = explode(",",$infoshortdesc->innertext);
+            $xml_categoryText = $xml->createTextNode($category);
             $xml_title->appendChild($xml_titleText);	
-            $xml_subtitle->appendChild($xml_subtitleText);
+            $xml_category->appendChild($xml_categoryText);
 
             $xml_title_en = null;
             $matches = null;
@@ -122,13 +132,14 @@ function get_programs_of_channel($channelID) {
 
                 $replace_chars = array("(",")");
                 $title_en = str_replace($replace_chars,"",$matches[0]);
-                $title_en = ucfirst(strtolower($title_en));
+                $title_en = ucwords(strtolower($title_en));
 
                 $xml_titleText_en = $xml->createTextNode($title_en);
                 $xml_title_en->appendChild($xml_titleText_en);
             } else {
                 $description = $infolongdesc_plain;
             }		
+            $xml_desc = null;
             if (preg_match('/\w+/',$description)) {
                 // Description exists
                 $description = str_replace("\r\n"," ",$description);
@@ -137,14 +148,18 @@ function get_programs_of_channel($channelID) {
                 $xml_desc = $xml->createElement("desc");
                 $xml_descText = $xml->createTextNode($description);
                 $xml_desc->appendChild($xml_descText);    
-                $xml_programme->appendChild($xml_desc);
+                
             }            
 
             $xml_programme->appendChild($xml_title);	
             if ($xml_title_en) {
                 $xml_programme->appendChild($xml_title_en);
             }
-            $xml_programme->appendChild($xml_subtitle);	            	
+            $xml_programme->appendChild($xml_category);
+            if ($xml_desc) {
+                $xml_programme->appendChild($xml_desc);
+            }            
+            
             $xml_tv->appendChild($xml_programme);
 
             $no_of_programme++;
@@ -159,7 +174,7 @@ function get_programs_of_channel($channelID) {
  
 ini_set('user_agent','Mozilla/4.0 (compatible; MSIE 6.0)'); 
 
-epg_log("EPG Grabber for site $siteName started ...");
+epg_log("EPG Grabber for site $siteName started ...", true);
 $time_start = microtime(true);
 
 // Get DOM from URL
@@ -214,10 +229,14 @@ $channel_counter = 1;
 
 foreach($channels as $channelID => $channelName) {
     
-    //if ($channelID!="TV2") continue;   
-    
-	$programs_grabbed = get_programs_of_channel($channelID);
-	epg_log("EPG of channel $channelID ($channel_counter/$no_of_channels) completed, number of programs found: $programs_grabbed");	
+    if (isset($exclude_channels) && 
+        is_array($exclude_channels) &&
+        in_array($channelID, $exclude_channels)) {
+        epg_log("Channel $channelID ($channel_counter/$no_of_channels) excluded by configuration!");        
+    } else {
+        $programs_grabbed = get_programs_of_channel($channelID);
+	    epg_log("EPG of channel $channelID ($channel_counter/$no_of_channels) completed, number of programs found: $programs_grabbed");	    
+    }
 	$channel_counter++;    
 }
 
