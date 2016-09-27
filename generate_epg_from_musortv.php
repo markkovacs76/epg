@@ -23,6 +23,7 @@ $ini_array = parse_ini_file("generate_epg.ini");
 
 $siteName         = $ini_array["siteName"];
 $timeoffset       = $ini_array["timeoffset"];
+$no_of_days       = $ini_array["no_of_days"];
 $output_xml       = $ini_array["output_xml"];
 $logfile          = $ini_array["logfile"];
 
@@ -30,7 +31,7 @@ if (isset($ini_array["exclude_channels"])) {
     $exclude_channels = $ini_array["exclude_channels"];
 }
 
-$version    = "v1.1";
+$version    = "v1.2";
 
 include('simple_html_dom.php');
 
@@ -51,16 +52,16 @@ function get_programs_of_channel($channelID) {
 	global $xml_tv;
 	global $siteName;
     global $timeoffset;
-	
-    # 2 days are considered
-	$days[] = new DateTime();
-    $days[] = new DateTime('tomorrow');
-    
+	global $no_of_days; 
+
+    // search from today
+    $process_day = new DateTime();
+
     $no_of_programme = 0;
     
-    foreach($days as $process_day) {
+    for ($daycount = 0; $daycount < $no_of_days; $daycount++) {
         
-        # check today
+        // check today
         if ($process_day->format('Ymd')==date('Ymd')) {
             $url = $siteName . "/mai/tvmusor/" . $channelID;
         } else {
@@ -166,6 +167,8 @@ function get_programs_of_channel($channelID) {
 
         }
         
+        $process_day->modify('+1 day');
+        
     }
     
 	return $no_of_programme;
@@ -248,4 +251,4 @@ $time_secs = $time % 60;
 $xml->formatOutput = true;
 $xml->save($output_xml);
 epg_log("EPG stored in XMLTV format to file ".realpath($output_xml));
-epg_log("EPG Grabber for site $siteName completed, running time: $time_mins minutes, $time_secs seconds.");
+epg_log("EPG Grabber for site $siteName completed, number of days processed: $no_of_days, running time: $time_mins minutes, $time_secs seconds.");

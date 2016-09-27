@@ -1,5 +1,6 @@
 #!/bin/bash
 XML_FILE=guide.xml
+LOG_FILE=log.txt
 EPG_GRABBER_DIR=/var/www/epg/generate
 WEBROOT_DIR=/var/www/epg
 
@@ -12,3 +13,4 @@ fi
 gzip -k ${XML_FILE}
 cp ${XML_FILE} ${WEBROOT_DIR}
 cp ${XML_FILE}.gz ${WEBROOT_DIR} 
+cp ${LOG_FILE} ${WEBROOT_DIR}
