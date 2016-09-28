@@ -26,14 +26,22 @@ $timeoffset       = $ini_array["timeoffset"];
 $no_of_days       = $ini_array["no_of_days"];
 $output_xml       = $ini_array["output_xml"];
 $logfile          = $ini_array["logfile"];
+$max_attempt      = $ini_array["max_attempt"];
 
 if (isset($ini_array["exclude_channels"])) {
     $exclude_channels = $ini_array["exclude_channels"];
 }
 
-$version    = "v1.2";
+$version    = "v1.3";
 
 include('simple_html_dom.php');
+
+set_error_handler(
+    create_function(
+        '$severity, $message, $file, $line',
+        'throw new ErrorException($message, $severity, $severity, $file, $line);'
+    )
+);
 
 function epg_log($string, $delete=false) {
     global $logfile;    
@@ -52,7 +60,8 @@ function get_programs_of_channel($channelID) {
 	global $xml_tv;
 	global $siteName;
     global $timeoffset;
-	global $no_of_days; 
+	global $no_of_days;
+    global $max_attempt;
 
     // search from today
     $process_day = new DateTime();
@@ -67,10 +76,24 @@ function get_programs_of_channel($channelID) {
         } else {
             $url = $siteName . "/napi/tvmusor/" . $channelID . "/" . $process_day->format('Y.m.d');
         }
+                
         
-        // Get links from actual date page of channel
-        $html = file_get_html($url);
-
+        for($attempt=1;$attempt<=$max_attempt;$attempt++) {
+            try {
+                // Get links from actual date page of channel
+                $html = file_get_html($url);                
+                break;
+            } 
+            catch (Exception $e) {
+                epg_log("WARNING: Failed to load page $url! Attempt: $attempt");
+                sleep(3);
+            }    
+        }
+        if ($attempt > $max_attempt) {
+            epg_log("ERROR: Failed to load page $url! Omitting...");
+            continue;
+        }
+        
         $hrefs = array();
 
         $table=$html->find('table.content_outer',1);
@@ -78,12 +101,30 @@ function get_programs_of_channel($channelID) {
             $td = $e->find('td.dailyprogtitleold,td.dailyprogtitle',0);		
             $hrefs[] = $td->find('a',0)->href;		    
         }
-        
+            
         foreach($hrefs as $href) {
-            $url = $siteName."/".$href;
-
-            // Get EPG info from site 
-            $html = file_get_html($url);
+            if ($href[0] !== "/") {
+                $url = $siteName . "/" . $href;
+            } else {
+                $url = $siteName . $href;
+            }
+                    
+            // Get EPG info from site             
+            for($attempt=1;$attempt<=$max_attempt;$attempt++) {
+                try {
+                    $html = file_get_html($url);
+                    break;
+                } 
+                catch (Exception $e) {
+                    epg_log("WARNING: Failed to load page $url! Attempt: $attempt");
+                    sleep(3);
+                }    
+            }
+            if ($attempt > $max_attempt) {
+                epg_log("ERROR: Failed to load page $url! Omitting...");
+                continue;
+            }
+            
             $infotimeyear = $html->find('span.eventinfotimeyear',0);
             $infosmallline = $html->find('div.eventinfosmallline',0)->plaintext;
             $matches = null;	
@@ -180,8 +221,21 @@ ini_set('user_agent','Mozilla/4.0 (compatible; MSIE 6.0)');
 epg_log("EPG Grabber for site $siteName started ...", true);
 $time_start = microtime(true);
 
-// Get DOM from URL
-$html = file_get_html($siteName);
+for($attempt=1;$attempt<=$max_attempt;$attempt++) {
+    try {
+        // Get DOM from URL
+        $html = file_get_html($siteName);
+        break;
+    } 
+    catch (Exception $e) {
+        epg_log("WARNING: Failed to load page $siteName! Attempt: $attempt");
+        sleep(3);
+    }    
+}
+if ($attempt > $max_attempt) {
+    epg_log("ERROR: Failed to load page $siteName! Exiting...");    
+    exit(1);
+}
 
 // Find all channels
 $channels = array();
@@ -243,12 +297,21 @@ foreach($channels as $channelID => $channelName) {
 	$channel_counter++;    
 }
 
+restore_error_handler();
+
 $time_end = microtime(true);
 $time = round($time_end - $time_start);
 $time_mins = round($time / 60);
 $time_secs = $time % 60;
 
 $xml->formatOutput = true;
-$xml->save($output_xml);
+try {
+    $xml->save($output_xml);
+}
+catch (Exception $e) {
+    epg_log("ERROR: EPG is not stored in XMLTV format to file ".realpath($output_xml)."!");
+    exit(1);
+}
+
 epg_log("EPG stored in XMLTV format to file ".realpath($output_xml));
 epg_log("EPG Grabber for site $siteName completed, number of days processed: $no_of_days, running time: $time_mins minutes, $time_secs seconds.");
