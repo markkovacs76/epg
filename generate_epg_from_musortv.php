@@ -32,7 +32,15 @@ if (isset($ini_array["exclude_channels"])) {
     $exclude_channels = $ini_array["exclude_channels"];
 }
 
-$version = "v1.4";
+$incremental_mode = false;
+$expired_hours = 0;
+
+if (isset($ini_array["incremental_mode"])) {
+    $incremental_mode = $ini_array["incremental_mode"] && file_exists($output_xml);
+    $expired_hours = $ini_array["expired_hours"];
+}
+
+$version = "v2.0";
 
 include('simple_html_dom.php');
 include('guess_category.php');
@@ -44,7 +52,7 @@ function epg_log($string, $delete = false)
     global $logfile;
     $logstring = date("Y-m-d H:i:s") . ": " . $string . "\n";
     if ($logfile) {
-        if ($delete) {
+        if ($delete&&file_exists($logfile)) {
             unlink($logfile);
         }
         file_put_contents($logfile, $logstring, FILE_APPEND | LOCK_EX);
@@ -56,11 +64,13 @@ function get_programs_of_channel($channelID)
 {
     global $xml;
     global $xml_tv;
+    global $xpath;    
     global $siteName;
     global $timeoffset;
     global $no_of_days;
     global $max_attempt;
-    
+    global $incremental_mode;
+        
     // search from today
     $process_day = new DateTime();
     
@@ -112,21 +122,54 @@ function get_programs_of_channel($channelID)
         }
         
         $hrefs = array();
-        
+                
         $table = $html->find('table.content_outer', 1);
         foreach ($table->find('table.dailyprogentry') as $e) {
-            $td      = $e->find('td.dailyprogtitleold,td.dailyprogtitle', 0);
-            $hrefs[] = $td->find('a', 0)->href;
+                        
+            $td_title = $e->find('td.dailyprogtitleold,td.dailyprogtitlenow,td.dailyprogtitle', 0);
+            $program_exists = false;
+            
+            if ($incremental_mode) {                
+                $td_time  = $e->find('td.dailyprogtimeold,td.dailyprogtimenow,td.dailyprogtime', 0);
+                $start_hm = str_replace(":","",trim($td_time->plaintext));
+                $start    = $process_day->format('Ymd').$start_hm."00 ".$timeoffset;                
+                
+                // Search existing program in the xml
+                $xml_programs_match = $xpath->query("/tv/programme[@start='$start'][@channel='$channelID']");
+                if ($xml_programs_match->length > 0) {
+                    $xml_titles = $xml_programs_match->item(0)->getElementsByTagName('title');                
+                    foreach($xml_titles as $xml_title) {
+                        if ($xml_title->hasAttribute('lang') && $xml_title->getAttribute('lang')==="hu") {
+                            $program_title = trim($xml_title->textContent);                        
+                            if (trim($td_title->find('a', 0)->plaintext) === $program_title) {
+                                // No need to grab
+                                $program_exists = true;
+                            } else {
+                                // Program found but the title differs -> remove existing program and grab the new one
+                                $xml_tv->removeChild($xml_programs_match->item(0));
+                            }
+                        break;
+                        }
+                    }
+                }    
+            }
+                        
+            if (!$program_exists) {
+                // Only new programs shall be grabbed in case of incremental mode, or all programs
+                $hrefs[]  = $td_title->find('a', 0)->href;
+            }            
         }
-        
-        foreach ($hrefs as $href) {
+
+        // Grab the programs separately
+        foreach($hrefs as $href) {
+            
             if ($href[0] !== "/") {
                 $url = $siteName . "/" . $href;
             } else {
                 $url = $siteName . $href;
             }
             
-            // Get EPG info from site             
+            // Load program site to get EPG info
             for ($attempt = 1; $attempt <= $max_attempt; $attempt++) {
                 try {
                     $html = file_get_html($url);
@@ -200,13 +243,9 @@ function get_programs_of_channel($channelID)
                 $description  = substr($infolongdesc_plain, strlen($matches[0]));
                 $xml_title_en = $xml->createElement("title");
                 $xml_title_en->setAttribute("lang", "en");
-                
-                $replace_chars = array(
-                    "(",
-                    ")"
-                );
-                $title_en      = str_replace($replace_chars, "", $matches[0]);
-                $title_en      = ucwords(strtolower($title_en));
+
+                $title_en = str_replace(array("(",")"), "", $matches[0]);
+                $title_en = ucwords(strtolower($title_en));
                 
                 $xml_titleText_en = $xml->createTextNode($title_en);
                 $xml_title_en->appendChild($xml_titleText_en);
@@ -216,10 +255,7 @@ function get_programs_of_channel($channelID)
             $xml_desc = null;
             if (preg_match('/\w+/', $description)) {
                 // Description exists
-                $description = str_replace(array(
-                    "\r\n",
-                    "\xC2\xA0"
-                ), " ", $description);
+                $description = str_replace(array("\r\n","\xC2\xA0"), " ", $description);
                 $description = trim($description);
                 
                 $xml_desc     = $xml->createElement("desc");
@@ -230,24 +266,32 @@ function get_programs_of_channel($channelID)
             $xml_programme->appendChild($xml_title);
             if ($xml_title_en) {
                 $xml_programme->appendChild($xml_title_en);
-            }
-            
+            }            
             if ($xml_subTitle) {
                 $xml_programme->appendChild($xml_subTitle);
-            }
-            
+            }            
             if ($xml_category_en) {
                 $xml_programme->appendChild($xml_category_en);
-            }
-            
+            }            
             if ($xml_desc) {
                 $xml_programme->appendChild($xml_desc);
+            }            
+            
+            if ($incremental_mode) {
+                // Place the new tag to the correct position
+                $xml_position = $xpath->query("/tv/programme[@channel='$channelID'][last()]/following-sibling::programme")->item(0);
+                if ($xml_position) {
+                    $xml_tv->insertBefore($xml_programme, $xml_position);
+                } else {
+                    // Place the new tag to the end
+                    $xml_tv->appendChild($xml_programme);
+                }    
+            } else {
+                // Place the new tag to the end
+                $xml_tv->appendChild($xml_programme);
             }
             
-            $xml_tv->appendChild($xml_programme);
-            
-            $no_of_programme++;
-            
+            $no_of_programme++;            
         }
         
         $process_day->modify('+1 day');
@@ -257,11 +301,45 @@ function get_programs_of_channel($channelID)
     return $no_of_programme;
 }
 
+function remove_expired_programs($channelID) {
+    global $xml;
+    global $xpath;
+    global $now;
+    global $expired_hours;
+    
+    $no_of_expired = 0;
+    
+    $xml_tv = $xpath->query("/tv")->item(0);
+    $xml_programs = $xpath->query("/tv/programme[@channel='$channelID'][@start][@stop]");
+    
+    foreach ($xml_programs as $xml_program) {
+        
+        $stop = $xml_program->getAttribute("stop");
+        list($stop_year, $stop_month, $stop_day, $stop_hour, $stop_min, $stop_secs, $stop_tz) = sscanf($stop,"%4s%2s%2s%2s%2s%2s %5s");
+        $stop_date = new DateTime("$stop_year/$stop_month/$stop_day $stop_hour:$stop_min:$stop_secs");
+        
+        $diff_seconds = $now->getTimestamp() - $stop_date->getTimestamp();
+        
+        if ($diff_seconds >= $expired_hours*3600) {        
+            $xml_tv->removeChild($xml_program);
+            $no_of_expired++;
+        }
+        
+    }
+    if ($no_of_expired > 0) {
+        epg_log("Expired EPGs of channel $channelID removed, number of removed programs: $no_of_expired");
+    }
+}
+
 
 ini_set('user_agent', 'Mozilla/4.0 (compatible; MSIE 6.0)');
 
 epg_log("EPG Grabber for site $siteName started ...", true);
+if ($incremental_mode) {
+    epg_log("Incremental mode is set: expired programs will be removed + only new programs will be added");
+}
 $time_start = microtime(true);
+$now = new DateTime();
 
 for ($attempt = 1; $attempt <= $max_attempt; $attempt++) {
     try {
@@ -285,34 +363,59 @@ $channels = array();
 foreach ($html->find('a.channellistentry') as $e) {
     $href            = $e->href;
     $code            = substr($href, strrpos($href, '/') + 1);
-    $channelName     = substr($e->innertext, 0, -7);
+    $channelName     = $e->innertext; 
     $channels[$code] = $channelName;
 }
 
 ksort($channels);
 
 // Create output xml object
-$xml    = new DOMDocument('1.0', 'UTF-8');
-// Create tv element
-$xml_tv = $xml->createElement("tv");
-// Set the attributes
-$xml_tv->setAttribute("generator-info-name", "musor.tv grabber by Márk Kovács, 2016-09-19, Version " . $version);
-$xml_tv->setAttribute("generator-info-url", "http://epg.gravi.hu");
-$xml->appendChild($xml_tv);
+$xml = new DOMDocument('1.0', 'UTF-8');    
+
+$xml_first_program = null;
+if ($incremental_mode) {
+    $xml->preserveWhiteSpace = false;
+    $xml->load($output_xml);
+    $xpath = new DOMXpath($xml);
+    // Remove existing channel entries in incremental mode, because it will be recreated
+    $xml_tv = $xpath->query("/tv")->item(0);
+    if ($xml_tv !== null) {
+        $xml_channels_to_remove = $xpath->query("/tv/channel");
+        foreach($xml_channels_to_remove as $xml_channel) {
+            $xml_tv->removeChild($xml_channel);
+        }
+        $xml_first_program = $xpath->query("/tv/programme[1]")->item(0);
+    } else {
+        $xml_tv = $xml->createElement("tv");
+    }
+} else {
+    // Create tv element
+    $xml_tv = $xml->createElement("tv");
+    // Set the attributes
+    $xml_tv->setAttribute("generator-info-name", "musor.tv grabber by Márk Kovács, 2016-09-19, Version " . $version);
+    $xml_tv->setAttribute("generator-info-url", "http://epg.gravi.hu");
+    $xml->appendChild($xml_tv);    
+}
 
 $no_of_channels = 0;
 
-foreach ($channels as $channelID => $channelName) {
+foreach ($channels as $channelID => $channelName) {    
     $xml_channel = $xml->createElement("channel");
     $xml_channel->setAttribute("id", $channelID);
     $xml_displayName = $xml->createElement("display-name");
     $xml_displayName->setAttribute("lang", "hu");
     $xml_displayNameText = $xml->createTextNode($channelName);
-    $xml_url             = $xml->createElement("url");
-    $xml_url_text        = $xml->createTextNode($siteName . "/mai/tvmusor/" . $channelID);
+    $xml_url = $xml->createElement("url");
+    $xml_url_text = $xml->createTextNode($siteName . "/mai/tvmusor/" . $channelID);
     $xml_url->appendChild($xml_url_text);
     $xml_displayName->appendChild($xml_displayNameText);
-    $xml_tv->appendChild($xml_channel);
+    if ($xml_first_program) {
+        // Place channel tags on top of the file
+        $xml_tv->insertBefore($xml_channel, $xml_first_program);
+    } else {
+        $xml_tv->appendChild($xml_channel);
+    }
+    
     $xml_channel->appendChild($xml_displayName);
     $xml_channel->appendChild($xml_url);
     
@@ -324,12 +427,16 @@ epg_log("Channel list updated, number of channels: " . $no_of_channels);
 $channel_counter = 1;
 
 foreach ($channels as $channelID => $channelName) {
-    
+        
     if (isset($exclude_channels) && is_array($exclude_channels) && in_array($channelID, $exclude_channels)) {
         epg_log("Channel $channelID ($channel_counter/$no_of_channels) excluded by configuration!");
     } else {
         $programs_grabbed = get_programs_of_channel($channelID);
-        epg_log("EPG of channel $channelID ($channel_counter/$no_of_channels) completed, number of programs found: $programs_grabbed");
+        epg_log("EPG grab of channel $channelID ($channel_counter/$no_of_channels) completed, number of programs found: $programs_grabbed");
+    }
+    if ($incremental_mode) {
+        // Remove expired programs of given channel
+        remove_expired_programs($channelID);
     }
     $channel_counter++;
 }
