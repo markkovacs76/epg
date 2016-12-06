@@ -22,11 +22,12 @@
 $ini_array = parse_ini_file("generate_epg.ini");
 
 $siteName    = $ini_array["siteName"];
-$timeoffset  = $ini_array["timeoffset"];
+$timeoffset  = (isset($ini_array["timeoffset"])?$ini_array["timeoffset"]:date('O'));
 $no_of_days  = $ini_array["no_of_days"];
 $output_xml  = $ini_array["output_xml"];
 $logfile     = $ini_array["logfile"];
 $max_attempt = $ini_array["max_attempt"];
+$user_agent  = $ini_array["user_agent"];
 
 if (isset($ini_array["exclude_channels"])) {
     $exclude_channels = $ini_array["exclude_channels"];
@@ -331,8 +332,7 @@ function remove_expired_programs($channelID) {
     }
 }
 
-
-ini_set('user_agent', 'Mozilla/4.0 (compatible; MSIE 6.0)');
+ini_set('user_agent', $user_agent);
 
 epg_log("EPG Grabber for site $siteName started ...", true);
 if ($incremental_mode) {
