@@ -8,7 +8,7 @@ cd ${EPG_GRABBER_DIR}
 php generate_epg_from_musortv.php
 if [ $? -ne 0 ];
 then
-  echo "ERROR: EPG generation was not successful!"
+  echo "ERROR: EPG generation was not successful!" | mail -s "EPG generation error!" markkovacs76@gmail.com
   exit $?
 fi
 
@@ -20,7 +20,7 @@ fi
 gzip -k ${XML_FILE}
 if [ $? -ne 0 ];
 then
-  echo "ERROR: EPG compression was not successful!"
+  echo "ERROR: EPG compression was not successful!" | mail -s "EPG compression error!" markkovacs76@gmail.com
   exit $?
 fi
 

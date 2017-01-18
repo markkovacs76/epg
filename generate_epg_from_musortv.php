@@ -61,6 +61,17 @@ function epg_log($string, $delete = false)
     echo $logstring;
 }
 
+function url_exists($url)
+{   
+    
+    
+    $headers = get_headers($url, 1);
+    if ($headers[0] == 'HTTP/1.1 200 OK') {
+        return true;
+    }
+    return false;
+}
+
 function get_programs_of_channel($channelID)
 {
     global $xml;
@@ -71,6 +82,7 @@ function get_programs_of_channel($channelID)
     global $no_of_days;
     global $max_attempt;
     global $incremental_mode;
+    global $ini_array;
         
     // search from today
     $process_day = new DateTime();
@@ -110,12 +122,24 @@ function get_programs_of_channel($channelID)
                 if ($icon_url[0] !== "/") {
                     $icon_url = "/" . $icon_url;
                 }
+                
                 $xml_channels = $xml->getElementsByTagName("channel");
                 foreach ($xml_channels as $xml_channel) {
+                    // Look for corresponding channel in xml
                     if ($xml_channel->getAttribute("id") === $channelID) {
-                        $xml_icon = $xml->createElement("icon");
-                        $xml_icon->setAttribute("src", $siteName . $icon_url);
-                        $xml_channel->appendChild($xml_icon);
+                        // Channel found                        
+                        if (isset($ini_array["override_icon_url"][$channelID])) {
+                            // Override grabbed value to configured                             
+                            $icon_url = $ini_array["override_icon_url"][$channelID];
+                        }
+                        // Check if url exists
+                        if (url_exists($siteName . $icon_url)) {                            
+                            $xml_icon = $xml->createElement("icon");
+                            $xml_icon->setAttribute("src", $siteName . $icon_url);
+                            $xml_channel->appendChild($xml_icon);
+                        } else {
+                            epg_log("WARNING: Icon url '${siteName}${icon_url}' does not exist, icon tag will not be generated!");
+                        }
                         break;
                     }
                 }
